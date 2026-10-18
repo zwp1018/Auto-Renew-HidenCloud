@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import os,re,sys,time,random,requests
+import os, re, sys, time, random, requests
 from playwright.sync_api import sync_playwright
 
 # --- 环境变量 ---
@@ -32,8 +32,7 @@ def get_current_ip(proxy_server=None):
     """获取当前出口IP"""
     proxies = {"http": proxy_server, "https": proxy_server} if (proxy_server and IS_PROXY) else None
     try:
-        resp = requests.get("https://api.ip.sb/ip", proxies=proxies, timeout=15)
-        # log(f"请求出口IP完成, status={resp.status_code}")
+        resp = requests.get("https://api.ip.sb/ip", proxies=proxies, timeout=25) # 延长至 25 秒
         if resp.status_code == 200:
             return resp.text.strip()
         return "获取失败"
@@ -47,7 +46,6 @@ def send_telegram_notification(status, old_due, new_due):
         log("⚠️ Telegram 未配置，跳过通知")
         return False
     
-    # 获取运行时间
     local_time = time.gmtime(time.time() + 8 * 3600)
     now = time.strftime("%Y-%m-%d %H:%M:%S", local_time)
     if '@' in EMAIL:
@@ -74,7 +72,7 @@ def send_telegram_notification(status, old_due, new_due):
         "parse_mode": "HTML"
     }
     try:
-        resp = requests.post(url, json=payload, timeout=10, proxies=REQUESTS_PROXIES)
+        resp = requests.post(url, json=payload, timeout=20, proxies=REQUESTS_PROXIES) # 延长至 20 秒
         if resp.status_code == 200:
             log("✅ Telegram 通知发送成功")
             return True
@@ -91,7 +89,8 @@ def handle_cloudflare(page):
         return True
     log("⚠️ 检测到 Cloudflare 验证...")
     start_time = time.time()
-    while time.time() - start_time < 60:
+    # 延长 Cloudflare 总体等待时间至 120 秒
+    while time.time() - start_time < 120:
         if page.locator(iframe_selector).count() == 0:
             log("✅ Cloudflare 验证通过！")
             return True
@@ -100,12 +99,13 @@ def handle_cloudflare(page):
             checkbox = frame.locator('input[type="checkbox"]')
             if checkbox.is_visible():
                 log("🖱️ 点击验证复选框...")
-                time.sleep(random.uniform(0.5, 1.5))
+                # 增加点击前后的拟人化延迟
+                time.sleep(random.uniform(2.0, 4.0)) 
                 checkbox.click()
                 log("⏳ 已点击，等待验证结果...")
-                time.sleep(5)
+                time.sleep(8) # 从 5 秒拉长到 8 秒
             else:
-                time.sleep(1)
+                time.sleep(2) # 轮询间隔拉长
         except Exception:
             pass
     log("❌ 验证超时。")
@@ -126,7 +126,8 @@ def login(page):
                 'secure': True,
                 'sameSite': 'Lax'
             }])
-            page.goto(f"{BASE_URL}/dashboard", wait_until="domcontentloaded", timeout=60000)
+            # 页面加载超时拉长至 120 秒
+            page.goto(f"{BASE_URL}/dashboard", wait_until="domcontentloaded", timeout=120000)
             handle_cloudflare(page)
             page_title = page.title()
             log(f"📝 当前Title: {page_title}")
@@ -142,17 +143,18 @@ def login(page):
         return False
     log("💣 尝试账号密码登录...")
     try:
-        page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=60000)
+        page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=120000)
         handle_cloudflare(page)
         page.fill('input[name="email"]', EMAIL)
         page.fill('input[name="password"]', PASSWORD)
-        time.sleep(0.5)
+        time.sleep(2) # 填表后等待时间拉长
         handle_cloudflare(page)
         page.click('button[type="submit"]')
-        time.sleep(3)
+        time.sleep(8) # 提交后等待时间从 3 秒拉长到 8 秒
         handle_cloudflare(page)
-        page.wait_for_url(f"{BASE_URL}/*", timeout=30000)
-        page.goto(f"{BASE_URL}/dashboard", wait_until="domcontentloaded", timeout=60000)
+        # URL 跳转超时拉长至 60 秒
+        page.wait_for_url(f"{BASE_URL}/*", timeout=60000)
+        page.goto(f"{BASE_URL}/dashboard", wait_until="domcontentloaded", timeout=120000)
         handle_cloudflare(page)
         page_title = page.title()
         log(f"📝 当前Title: {page_title}")
@@ -169,18 +171,16 @@ def login(page):
 def get_server_id(page):
     try:
         handle_cloudflare(page)
-        time.sleep(3)
+        time.sleep(8) # DOM 树渲染等待时间从 3 秒拉长至 8 秒，防止元素没刷出来
         html = page.content()
         log(f"📝 页面长度: {len(html)}, URL: {page.url}")
 
-        # 方案1: 从 href 链接中提取 /service/数字/manage
         matches = re.findall(r'/service/(\d+)/manage', html)
         if matches:
             server_id = matches[0]
             log(f"✅ 从链接中获取到 Server ID: {server_id}")
             return server_id
 
-        # 方案2: 从 span 标签中提取 #数字 (如 "Free Server #218079")
         matches = re.findall(r'#(\d{4,})', html)
         if matches:
             server_id = matches[0]
@@ -197,8 +197,9 @@ def get_server_id(page):
 def get_due_date(page):
     try:
         if SERVICE_URL not in page.url:
-            page.goto(SERVICE_URL, wait_until="domcontentloaded", timeout=60000)
+            page.goto(SERVICE_URL, wait_until="domcontentloaded", timeout=120000)
         handle_cloudflare(page)
+        time.sleep(3) # 追加少量等待确保文本加载
         body_text = page.locator("body").inner_text()
         patterns = [
             r"Due date\s+(\d{1,2}\s+[A-Za-z]{3}\s+\d{4})",
@@ -216,11 +217,10 @@ def get_due_date(page):
     return "未知"
 
 def renew_service(page):
-
     try:
         log("➡ 进入续期流程...")
         if page.url != SERVICE_URL:
-            page.goto(SERVICE_URL, wait_until="domcontentloaded", timeout=60000)
+            page.goto(SERVICE_URL, wait_until="domcontentloaded", timeout=120000)
         handle_cloudflare(page)
 
         log("🖱️ 准备点击 'Renew' 按钮...")
@@ -230,28 +230,30 @@ def renew_service(page):
         modal_opened = False
         for i in range(3):
             try:
-                renew_btn.wait_for(state="visible", timeout=10000)
+                # 寻找 Renew 按钮超时从 10 秒拉长至 30 秒
+                renew_btn.wait_for(state="visible", timeout=30000)
                 renew_btn.scroll_into_view_if_needed()
                 log(f"🖱️ 第 {i+1} 次尝试点击 'Renew'...")
                 renew_btn.click()
 
-                # 等待一小段时间，检测是否出现“未到续期时间”弹窗
-                time.sleep(2)
+                # 点击续期后，等待受限警告或弹窗的时间从 2 秒拉长至 6 秒
+                time.sleep(6)
                 page_text = page.locator("body").inner_text()
                 if "Renewal Restricted" in page_text or "can only renew" in page_text.lower():
                     log("⚠️ 未到续期时间，无法续期。")
                     page.screenshot(path="renew_not_allowed.png")
-                    return "NOT_TIME"   # 特殊状态
+                    return "NOT_TIME"
 
                 log("🖲️ 等待弹窗出现...")
                 try:
-                    create_btn.wait_for(state="visible", timeout=5000)
+                    # 等待弹窗加载的时间从 5 秒拉长至 20 秒
+                    create_btn.wait_for(state="visible", timeout=20000)
                     modal_opened = True
                     log("✅ 弹窗已成功弹出！")
                     break
                 except:
                     log("⚠️ 弹窗未出现，可能是点击未响应，准备重试...")
-                    time.sleep(2)
+                    time.sleep(5)
             except Exception as e:
                 log(f"❌ 点击尝试出错: {e}")
 
@@ -266,7 +268,8 @@ def renew_service(page):
 
         new_invoice_url = None
         start_wait = time.time()
-        while time.time() - start_wait < 90:
+        # 等待发票页面跳转的总时长从 90 秒拉长至 150 秒
+        while time.time() - start_wait < 150:
             if "/payment/invoice/" in page.url:
                 new_invoice_url = page.url
                 log(f"🎉 页面已跳转: {new_invoice_url}")
@@ -274,7 +277,7 @@ def renew_service(page):
             if page.locator('iframe[src*="challenges.cloudflare.com"]').count() > 0:
                 log("⚠️ 遇到拦截，尝试处理...")
                 handle_cloudflare(page)
-            time.sleep(1)
+            time.sleep(2)
 
         if not new_invoice_url:
             log("❌ 未能进入发票页面，超时。")
@@ -282,19 +285,19 @@ def renew_service(page):
             return False
 
         if page.url != new_invoice_url:
-            page.goto(new_invoice_url)
+            page.goto(new_invoice_url, timeout=120000)
         handle_cloudflare(page)
 
         log("🔎 查找 'Pay' 按钮...")
         pay_btn = page.locator('a:has-text("Pay"):visible, button:has-text("Pay"):visible').first
-        pay_btn.wait_for(state="visible", timeout=30000)
+        # 寻找 Pay 按钮的时间拉长至 60 秒
+        pay_btn.wait_for(state="visible", timeout=60000)
         pay_btn.click()
         log("✅ 'Pay' 按钮已点击。")
 
-        # 等待支付确认页面或跳转回服务页
-        time.sleep(5)
-        # 返回服务管理页面以获取新的到期时间
-        page.goto(SERVICE_URL, wait_until="domcontentloaded", timeout=60000)
+        # 支付确认请求等待时间从 5 秒拉长至 12 秒
+        time.sleep(12)
+        page.goto(SERVICE_URL, wait_until="domcontentloaded", timeout=120000)
         handle_cloudflare(page)
         return True
 
@@ -304,7 +307,6 @@ def renew_service(page):
         return False
 
 def main():
-    # 检查必要环境变量
     if not COOKIE_VALUE and not (EMAIL and PASSWORD):
         log("❌ 缺少登录凭证")
         sys.exit(1)
@@ -318,7 +320,6 @@ def main():
             else:
                 log("🌐 直连模式（未使用代理）")
             
-            # 获取当前出口ip
             current_ip = get_current_ip(PROXY_SERVER)
             log(f"🎯 当前出口IP: {current_ip}")
 
@@ -333,24 +334,24 @@ def main():
                 user_agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
                 proxy={"server": PROXY_SERVER} if IS_PROXY else None
             )
+            # 全局增加默认超时
+            context.set_default_timeout(60000)
+            
             page = context.new_page()
             page.add_init_script(STEALTH_JS)
 
             if not login(page):
                 sys.exit(1)
 
-            # 登录成功后，自动获取 Server ID
             server_id = get_server_id(page)
             if not server_id:
                 log("❌ 无法获取 Server ID，退出。")
                 sys.exit(1)
             SERVICE_URL = f"{BASE_URL}/service/{server_id}/manage"
 
-            # 获取旧到期时间
             old_due = get_due_date(page)
             log(f"📆 续费前到期时间：{old_due}")
 
-            # 执行续费
             renew_result = renew_service(page)
 
             new_due = old_due
@@ -360,12 +361,11 @@ def main():
             elif renew_result is False:
                 log("❌ 续费失败，脚本退出。")
                 status = "❌ 续期失败"
-            else:  # renew_result is True
+            else: 
                 new_due = get_due_date(page)
                 log(f"📆 续费后到期时间：{new_due}")
                 status = "✅ 续期成功"
 
-            # 发送 Telegram 通知
             send_telegram_notification(status, old_due, new_due)
 
             if renew_result == "NOT_TIME":
